@@ -40,11 +40,6 @@
 using gralloc::IonAlloc;
 
 #define ION_DEVICE "/dev/ion"
-#ifdef QCOM_BSP
-#ifndef NEW_ION_API
-#define NEW_ION_API
-#endif
-#endif
 
 int IonAlloc::open_device()
 {
@@ -96,21 +91,12 @@ int IonAlloc::alloc_buffer(alloc_data& data)
 
     fd_data.handle = ionAllocData.handle;
     handle_data.handle = ionAllocData.handle;
-#ifndef NEW_ION_API
-    if(ioctl(iFd, ION_IOC_MAP, &fd_data))
-#else
     if(ioctl(mIonFd, ION_IOC_MAP, &fd_data))
-#endif
     {
         err = -errno;
         ALOGE("%s: ION_IOC_MAP failed with error - %s",
               __FUNCTION__, strerror(errno));
         ioctl(mIonFd, ION_IOC_FREE, &handle_data);
-#ifndef NEW_ION_API
-        if(ionSyncFd >= 0)
-            close(ionSyncFd);
-        ionSyncFd = FD_INIT;
-#endif
         return err;
     }
 
@@ -122,9 +108,6 @@ int IonAlloc::alloc_buffer(alloc_data& data)
             ALOGE("%s: Failed to map the allocated memory: %s",
                   __FUNCTION__, strerror(errno));
             ioctl(mIonFd, ION_IOC_FREE, &handle_data);
-#ifndef NEW_ION_API
-            ionSyncFd = FD_INIT;
-#endif
             return err;
         }
         memset(base, 0, ionAllocData.len);
@@ -133,12 +116,6 @@ int IonAlloc::alloc_buffer(alloc_data& data)
                      CACHE_CLEAN_AND_INVALIDATE);
     }
 
-#ifndef NEW_ION_API
-    //Close the uncached FD since we no longer need it;
-    if(ionSyncFd >= 0)
-        close(ionSyncFd);
-    ionSyncFd = FD_INIT;
-#endif
 
     data.base = base;
     data.fd = fd_data.fd;

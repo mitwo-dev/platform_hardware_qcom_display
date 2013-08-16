@@ -188,6 +188,7 @@ int IonController::allocate(alloc_data& data, int usage)
 {
     int ionFlags = 0;
     int ret;
+    bool noncontig = false;
 
     data.uncached = useUncached(usage);
     data.allocType = 0;
@@ -195,11 +196,15 @@ int IonController::allocate(alloc_data& data, int usage)
     if(usage & GRALLOC_USAGE_PRIVATE_UI_CONTIG_HEAP)
         ionFlags |= ION_HEAP(ION_SF_HEAP_ID);
 
-    if(usage & GRALLOC_USAGE_PRIVATE_SYSTEM_HEAP)
+    if(usage & GRALLOC_USAGE_PRIVATE_SYSTEM_HEAP) {
         ionFlags |= ION_HEAP(ION_SYSTEM_HEAP_ID);
+        noncontig = true;
+    }
 
-    if(usage & GRALLOC_USAGE_PRIVATE_IOMMU_HEAP)
+    if(usage & GRALLOC_USAGE_PRIVATE_IOMMU_HEAP) {
         ionFlags |= ION_HEAP(ION_IOMMU_HEAP_ID);
+        noncontig = true;
+    }
 
     if(usage & GRALLOC_USAGE_PROTECTED) {
         if ((mUseTZProtection) && (usage & GRALLOC_USAGE_PRIVATE_MM_HEAP)) {
@@ -210,7 +215,8 @@ int IonController::allocate(alloc_data& data, int usage)
             // do not set ion secure flag & MM heap. Fallback to IOMMU heap.
             ionFlags |= ION_HEAP(ION_IOMMU_HEAP_ID);
         }
-    } else if(usage & GRALLOC_USAGE_PRIVATE_MM_HEAP) {
+    } else
+       if(usage & GRALLOC_USAGE_PRIVATE_MM_HEAP) {
         //MM Heap is exclusively a secure heap.
         //If it is used for non secure cases, fallback to IOMMU heap
         ALOGW("GRALLOC_USAGE_PRIVATE_MM_HEAP \
@@ -241,11 +247,16 @@ int IonController::allocate(alloc_data& data, int usage)
     {
         ALOGW("Falling back to system heap");
         data.flags = ION_HEAP(ION_SYSTEM_HEAP_ID);
+        noncontig = true;
         ret = mIonAlloc->alloc_buffer(data);
     }
 
     if(ret >= 0 ) {
         data.allocType |= private_handle_t::PRIV_FLAGS_USES_ION;
+        if (noncontig)
+            data.allocType |= private_handle_t::PRIV_FLAGS_NONCONTIGUOUS_MEM;
+        if(ionFlags & ION_SECURE)
+            data.allocType |= private_handle_t::PRIV_FLAGS_SECURE_BUFFER;
     }
 
     return ret;
