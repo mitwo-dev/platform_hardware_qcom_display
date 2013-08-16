@@ -154,6 +154,15 @@ set_speaker_light_locked(struct light_device_t* dev,
     green = (colorRGB >> 8) & 0xFF;
     blue = colorRGB & 0xFF;
 
+/*
+ * clear light state before new value
+ *
+ * to ensure all lights work in same phase
+ */
+    write_int(RED_LED_FILE, 0);
+    write_int(GREEN_LED_FILE, 0);
+    write_int(BLUE_LED_FILE, 0);
+
     if (onMS > 0 && offMS > 0) {
         int totalMS = onMS + offMS;
 
@@ -201,6 +210,17 @@ handle_speaker_battery_locked(struct light_device_t* dev)
     } else {
         set_speaker_light_locked(dev, &g_notification);
     }
+}
+
+static int
+set_light_battery(struct light_device_t* dev,
+        struct light_state_t const* state)
+{
+    pthread_mutex_lock(&g_lock);
+    g_battery = *state;
+    handle_speaker_battery_locked(dev);
+    pthread_mutex_unlock(&g_lock);
+    return 0;
 }
 
 static int
@@ -256,6 +276,8 @@ static int open_lights(const struct hw_module_t* module, char const* name,
 
     if (0 == strcmp(LIGHT_ID_BACKLIGHT, name))
         set_light = set_light_backlight;
+    else if (0 == strcmp(LIGHT_ID_BATTERY, name))
+        set_light = set_light_battery;
     else if (0 == strcmp(LIGHT_ID_NOTIFICATIONS, name))
         set_light = set_light_notifications;
     else if (0 == strcmp(LIGHT_ID_ATTENTION, name))
