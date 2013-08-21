@@ -34,8 +34,16 @@ ifeq ($(TARGET_USES_QCOM_BSP),true)
 # This flag is used to compile out any features that depend on framework changes
     common_flags += -DQCOM_BSP
 endif
-ifeq ($(call is-vendor-board-platform,QCOM),true)
 
+ifeq ($(call is-vendor-board-platform,QCOM),true)
 common_deps += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
 kernel_includes += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include
+endif
+
+ifeq ($(TARGET_DISPLAY_USE_RETIRE_FENCE),true)
+    common_flags += -DUSE_RETIRE_FENCE
+endif
+
+ifneq ($(TARGET_DISPLAY_INSECURE_MM_HEAP),true)
+    common_flags += -DSECURE_MM_HEAP
 endif
