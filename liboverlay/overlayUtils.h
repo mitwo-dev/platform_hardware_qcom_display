@@ -78,7 +78,6 @@
 #endif
 
 #define FB_DEVICE_TEMPLATE "/dev/graphics/fb%u"
-#define NUM_FB_DEVICES 3
 
 namespace overlay {
 
@@ -385,14 +384,7 @@ inline void clearMdpFlags(eMdpFlags& f, eMdpFlags v) {
     f = static_cast<eMdpFlags>(clrBit(f, v));
 }
 
-// fb 0/1/2
 enum { FB0, FB1, FB2 };
-
-//Panels could be categorized as primary and external
-enum { PRIMARY, EXTERNAL };
-
-// 2 for rgb0/1 double bufs
-enum { RGB_PIPE_NUM_BUFS = 2 };
 
 struct ScreenInfo {
     ScreenInfo() : mFBWidth(0),
@@ -486,6 +478,8 @@ inline bool isYuv(uint32_t format) {
         case MDP_Y_CR_CB_H2V2:
         case MDP_Y_CR_CB_GH2V2:
         case MDP_Y_CBCR_H2V2_VENUS:
+        case MDP_YCBYCR_H2V1:
+        case MDP_YCRYCB_H2V1:
             return true;
         default:
             return false;
@@ -515,6 +509,7 @@ inline const char* getFormatString(int format){
         "MDP_ARGB_8888",
         "MDP_RGB_888",
         "MDP_Y_CRCB_H2V2",
+        "MDP_YCBYCR_H2V1",
         "MDP_YCRYCB_H2V1",
         "MDP_Y_CRCB_H2V1",
         "MDP_Y_CBCR_H2V1",
