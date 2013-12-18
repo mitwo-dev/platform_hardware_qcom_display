@@ -269,8 +269,9 @@ void initContext(hwc_context_t *ctx)
     ctx->mPrevDestVideo.left = ctx->mPrevDestVideo.top =
         ctx->mPrevDestVideo.right = ctx->mPrevDestVideo.bottom = 0;
     ctx->mPrevTransformVideo = 0;
+
     ctx->mBufferMirrorMode = false;
-    ctx->mSocId = getSocIdFromSystem();
+
     ALOGI("Initializing Qualcomm Hardware Composer");
     ALOGI("MDP version: %d", ctx->mMDP.version);
 
@@ -1437,6 +1438,7 @@ int configureLowRes(hwc_context_t *ctx, hwc_layer_1_t *layer,
     eTransform orient = static_cast<eTransform>(transform);
     int downscale = 0;
     int rotFlags = ovutils::ROT_FLAGS_NONE;
+    bool forceRot = false;
     Whf whf(getWidth(hnd), getHeight(hnd),
             getMdpFormat(hnd->format), hnd->size);
 
@@ -1475,13 +1477,24 @@ int configureLowRes(hwc_context_t *ctx, hwc_layer_1_t *layer,
         if(downscale) {
             rotFlags = ROT_DOWNSCALE_ENABLED;
         }
+        unsigned int& prevWidth = ctx->mPrevWHF[dpy].w;
+        unsigned int& prevHeight = ctx->mPrevWHF[dpy].h;
+        if(prevWidth != (uint32_t)getWidth(hnd) ||
+               prevHeight != (uint32_t)getHeight(hnd)) {
+            uint32_t prevBufArea = (prevWidth * prevHeight);
+            if(prevBufArea) {
+                forceRot = true;
+            }
+            prevWidth = (uint32_t)getWidth(hnd);
+            prevHeight = (uint32_t)getHeight(hnd);
+        }
     }
 
     setMdpFlags(layer, mdpFlags, downscale, transform);
     trimLayer(ctx, dpy, transform, crop, dst);
 
     if(isYuvBuffer(hnd) && //if 90 component or downscale, use rot
-            ((transform & HWC_TRANSFORM_ROT_90) || downscale)) {
+            ((transform & HWC_TRANSFORM_ROT_90) || downscale || forceRot)) {
         *rot = ctx->mRotMgr->getNext();
         if(*rot == NULL) return -1;
         Whf origWhf(hnd->width, hnd->height,
@@ -1674,20 +1687,6 @@ void LayerRotMap::setReleaseFd(const int& fence) {
     for(uint32_t i = 0; i < mCount; i++) {
         mRot[i]->setReleaseFd(dup(fence));
     }
-}
-
-int getSocIdFromSystem() {
-    FILE *device = NULL;
-    int soc_id = 0;
-    char  buffer[10];
-    int result;
-    device = fopen("/sys/devices/system/soc/soc0/id","r");
-    if(device != NULL) {
-        result = fread (buffer,1,4,device);
-        soc_id = atoi(buffer);
-        fclose(device);
-    }
-    return soc_id;
 }
 
 };//namespace qhwc

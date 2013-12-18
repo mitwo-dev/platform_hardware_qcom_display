@@ -42,8 +42,6 @@ using namespace overlay;
 #define VSYNC_DEBUG 0
 #define BLANK_DEBUG 1
 
-#define NON_PRO_8960_SOC_ID 87
-
 static int hwc_device_open(const struct hw_module_t* module,
                            const char* name,
                            struct hw_device_t** device);
@@ -151,11 +149,12 @@ static int hwc_prepare_primary(hwc_composer_device_1 *dev,
             const int fbZ = 0;
             ctx->mFBUpdate[dpy]->prepare(ctx, list, fbZ);
 
+#ifdef USE_COPYBIT_COMPOSITION_FALLBACK
             // Use Copybit, when MDP comp fails
             // (only for 8960 which has  dedicated 2D core)
-            if( (ctx->mSocId == NON_PRO_8960_SOC_ID) &&
-                                       ctx->mCopyBit[dpy])
+            if(ctx->mCopyBit[dpy])
                 ctx->mCopyBit[dpy]->prepare(ctx, list, dpy);
+#endif
         }
     }
     return 0;
@@ -176,14 +175,14 @@ static int hwc_prepare_external(hwc_composer_device_1 *dev,
            if(ctx->mMDPComp[dpy]->prepare(ctx, list) < 0) {
               const int fbZ = 0;
               ctx->mFBUpdate[dpy]->prepare(ctx, list, fbZ);
+#ifdef USE_COPYBIT_COMPOSITION_FALLBACK
               // Use Copybit, when MDP comp fails
               // (only for 8960 which has  dedicated 2D core)
-              if((ctx->mSocId == NON_PRO_8960_SOC_ID) &&
-                                   ctx->mCopyBit[dpy] &&
-                 !ctx->listStats[dpy].isDisplayAnimating)
-                    ctx->mCopyBit[dpy]->prepare(ctx, list, dpy);
-           }
-
+              if(ctx->mCopyBit[dpy] &&
+                      !ctx->listStats[dpy].isDisplayAnimating)
+                  ctx->mCopyBit[dpy]->prepare(ctx, list, dpy);
+#endif
+            }
             if(ctx->listStats[dpy].isDisplayAnimating) {
                 // Mark all app layers as HWC_OVERLAY for external during
                 // animation, so that SF doesnt draw it on FB

@@ -368,7 +368,7 @@ inline void swap(T& a, T& b) {
     a = b;
     b = tmp;
 }
-int getSocIdFromSystem();
+
 }; //qhwc namespace
 
 // -----------------------------------------------------------------------------
@@ -398,6 +398,7 @@ struct hwc_context_t {
     qhwc::LayerProp *layerProp[HWC_NUM_DISPLAY_TYPES];
     qhwc::MDPComp *mMDPComp[HWC_NUM_DISPLAY_TYPES];
     qhwc::CablProp mCablProp;
+    overlay::utils::Whf mPrevWHF[HWC_NUM_DISPLAY_TYPES];
 
     // No animation on External display feature
     // Notifies hwcomposer about the device orientation before animation.
@@ -425,8 +426,7 @@ struct hwc_context_t {
     //Used for SideSync feature
     //which overrides the mExtOrientation
     bool mBufferMirrorMode;
-    //used for enabling C2D Feature only for 8960 Non Pro Device
-    int mSocId;
+
     qhwc::LayerRotMap *mLayerRotMap[HWC_NUM_DISPLAY_TYPES];
 
     // Panel reset flag will be set if BTA check fails
