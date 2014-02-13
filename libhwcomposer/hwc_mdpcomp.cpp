@@ -114,24 +114,19 @@ bool MDPComp::init(hwc_context_t *ctx) {
             sMaxPipesPerMixer = true;
     }
 
-    if(ctx->mMDP.panel != MIPI_CMD_PANEL) {
-        // Idle invalidation is not necessary on command mode panels
-        long idle_timeout = DEFAULT_IDLE_TIME;
-        if(property_get("debug.mdpcomp.idletime", property, NULL) > 0) {
-            if(atoi(property) != 0)
-                idle_timeout = atoi(property);
-        }
+    unsigned long idle_timeout = DEFAULT_IDLE_TIME;
+    if(property_get("debug.mdpcomp.idletime", property, NULL) > 0) {
+        if(atoi(property) != 0)
+            idle_timeout = atoi(property);
+    }
 
-        //create Idle Invalidator only when not disabled through property
-        if(idle_timeout != -1)
-            idleInvalidator = IdleInvalidator::getInstance();
+    //create Idle Invalidator
+    idleInvalidator = IdleInvalidator::getInstance();
 
-        if(idleInvalidator == NULL) {
-            ALOGE("%s: failed to instantiate idleInvalidator object",
-                  __FUNCTION__);
-        } else {
-            idleInvalidator->init(timeout_handler, ctx, idle_timeout);
-        }
+    if(idleInvalidator == NULL) {
+        ALOGE("%s: failed to instantiate idleInvalidator object", __FUNCTION__);
+    } else {
+        idleInvalidator->init(timeout_handler, ctx, idle_timeout);
     }
     return true;
 }
@@ -865,7 +860,6 @@ int MDPComp::prepare(hwc_context_t *ctx, hwc_display_contents_1_t* list) {
                         mCurrentFrame.fbZ)) {
                 ALOGE("%s configure framebuffer failed", __func__);
                 reset(numLayers, list);
-                ctx->mOverlay->clear(mDpy);
                 return -1;
             } else { //Success
                 //Any change in composition types needs an FB refresh
@@ -885,8 +879,6 @@ int MDPComp::prepare(hwc_context_t *ctx, hwc_display_contents_1_t* list) {
         //Acquire and Program MDP pipes
         if(!programMDP(ctx, list)) {
             reset(numLayers, list);
-            ctx->mOverlay->clear(mDpy);
-            ctx->mLayerRotMap[mDpy]->clear();
             return -1;
         } else { //Success
             //Any change in composition types needs an FB refresh
@@ -917,14 +909,11 @@ int MDPComp::prepare(hwc_context_t *ctx, hwc_display_contents_1_t* list) {
             if(!ctx->mFBUpdate[mDpy]->prepare(ctx, list, mCurrentFrame.fbZ)) {
                 ALOGE("%s configure framebuffer failed", __func__);
                 reset(numLayers, list);
-                ctx->mOverlay->clear(mDpy);
                 return -1;
             }
         }
         if(!programYUV(ctx, list)) {
             reset(numLayers, list);
-            ctx->mOverlay->clear(mDpy);
-            ctx->mLayerRotMap[mDpy]->clear();
             return -1;
         }
     } else {

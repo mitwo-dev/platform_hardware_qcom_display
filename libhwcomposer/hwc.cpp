@@ -32,7 +32,6 @@
 #include "hwc_utils.h"
 #include "hwc_fbupdate.h"
 #include "hwc_mdpcomp.h"
-#include "hwc_dump_layers.h"
 #include "external.h"
 #include "hwc_copybit.h"
 #include "profiler.h"
@@ -42,6 +41,8 @@ using namespace overlay;
 
 #define VSYNC_DEBUG 0
 #define BLANK_DEBUG 1
+
+#define NON_PRO_8960_SOC_ID 87
 
 static int hwc_device_open(const struct hw_module_t* module,
                            const char* name,
@@ -139,8 +140,7 @@ static int hwc_prepare_primary(hwc_composer_device_1 *dev,
         hwc_display_contents_1_t *list) {
     hwc_context_t* ctx = (hwc_context_t*)(dev);
     const int dpy = HWC_DISPLAY_PRIMARY;
-    if(UNLIKELY(!ctx->mBasePipeSetup) && 
-            qdutils::MDPVersion::getInstance().getMDPVersion() >= qdutils::MDP_V4_2)
+    if(UNLIKELY(!ctx->mBasePipeSetup))
         setupBasePipe(ctx);
     if (LIKELY(list && list->numHwLayers > 1) &&
             ctx->dpyAttr[dpy].isActive) {
@@ -150,12 +150,11 @@ static int hwc_prepare_primary(hwc_composer_device_1 *dev,
             const int fbZ = 0;
             ctx->mFBUpdate[dpy]->prepare(ctx, list, fbZ);
 
-#ifdef USE_COPYBIT_COMPOSITION_FALLBACK
             // Use Copybit, when MDP comp fails
             // (only for 8960 which has  dedicated 2D core)
-            if(ctx->mCopyBit[dpy])
+            if( (ctx->mSocId == NON_PRO_8960_SOC_ID) &&
+                                       ctx->mCopyBit[dpy])
                 ctx->mCopyBit[dpy]->prepare(ctx, list, dpy);
-#endif
         }
     }
     return 0;
@@ -176,14 +175,14 @@ static int hwc_prepare_external(hwc_composer_device_1 *dev,
            if(ctx->mMDPComp[dpy]->prepare(ctx, list) < 0) {
               const int fbZ = 0;
               ctx->mFBUpdate[dpy]->prepare(ctx, list, fbZ);
-#ifdef USE_COPYBIT_COMPOSITION_FALLBACK
               // Use Copybit, when MDP comp fails
               // (only for 8960 which has  dedicated 2D core)
-              if(ctx->mCopyBit[dpy] &&
-                      !ctx->listStats[dpy].isDisplayAnimating)
-                  ctx->mCopyBit[dpy]->prepare(ctx, list, dpy);
-#endif
-            }
+              if((ctx->mSocId == NON_PRO_8960_SOC_ID) &&
+                                   ctx->mCopyBit[dpy] &&
+                 !ctx->listStats[dpy].isDisplayAnimating)
+                    ctx->mCopyBit[dpy]->prepare(ctx, list, dpy);
+           }
+
             if(ctx->listStats[dpy].isDisplayAnimating) {
                 // Mark all app layers as HWC_OVERLAY for external during
                 // animation, so that SF doesnt draw it on FB
@@ -499,9 +498,6 @@ static int hwc_set_primary(hwc_context_t *ctx, hwc_display_contents_1_t* list) {
         if(list->numHwLayers > 1)
             hwc_sync(ctx, list, dpy, fd);
 
-        // Dump the layers for primary
-        if(ctx->mHwcDebug[dpy])
-            ctx->mHwcDebug[dpy]->dumpLayers(list);
 
         if (!ctx->mMDPComp[dpy]->draw(ctx, list)) {
             ALOGE("%s: MDPComp draw failed", __FUNCTION__);
@@ -554,9 +550,6 @@ static int hwc_set_external(hwc_context_t *ctx,
         if(list->numHwLayers > 1)
             hwc_sync(ctx, list, dpy, fd);
 
-        // Dump the layers for external
-        if(ctx->mHwcDebug[dpy])
-            ctx->mHwcDebug[dpy]->dumpLayers(list);
 
         if (!ctx->mMDPComp[dpy]->draw(ctx, list)) {
             ALOGE("%s: MDPComp draw failed", __FUNCTION__);

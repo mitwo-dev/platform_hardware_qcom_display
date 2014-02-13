@@ -30,7 +30,6 @@
 #include "hwc_fbupdate.h"
 #include "mdp_version.h"
 #include "hwc_copybit.h"
-#include "hwc_dump_layers.h"
 #include "external.h"
 #include "virtual.h"
 #include "hwc_qclient.h"
@@ -112,90 +111,6 @@ static int openFramebufferDevice(hwc_context_t *ctx)
     return 0;
 }
 
-static int ppdComm(const char* cmd, hwc_context_t *ctx) {
-    int ret = -1;
-    ret = send(ctx->mCablProp.daemon_socket, cmd, strlen(cmd), MSG_NOSIGNAL);
-    if(ret < 0) {
-        if (errno == EPIPE) {
-            //For broken pipe case, we will close the socket and
-            //re-establish the connection
-            close(ctx->mCablProp.daemon_socket);
-            int daemon_socket = socket_local_client(DAEMON_SOCKET,
-                    ANDROID_SOCKET_NAMESPACE_RESERVED,
-                    SOCK_STREAM);
-            if(!daemon_socket) {
-                ALOGE("Connecting to socket failed: %s", strerror(errno));
-                ctx->mCablProp.enabled = false;
-                return -1;
-            }
-            struct timeval timeout;
-            timeout.tv_sec = 1;//wait 1 second before timeout
-            timeout.tv_usec = 0;
-
-            if (setsockopt(daemon_socket, SOL_SOCKET, SO_SNDTIMEO,
-                        (char*)&timeout, sizeof(timeout )) < 0)
-                ALOGE("setsockopt failed");
-
-            ctx->mCablProp.daemon_socket = daemon_socket;
-            //resend the cmd after connection is re-established
-            ret = send(ctx->mCablProp.daemon_socket, cmd, strlen(cmd),
-                       MSG_NOSIGNAL);
-            if (ret < 0) {
-                ALOGE("Failed to send data over socket: %s",
-                        strerror(errno));
-                return ret;
-            }
-        } else {
-            ALOGE("Failed to send data over socket: %s",
-                    strerror(errno));
-            return ret;
-        }
-    }
-    ALOGD_IF(HWC_UTILS_DEBUG, "%s: Sent command: %s", __FUNCTION__, cmd);
-    return 0;
-}
-
-static void connectPPDaemon(hwc_context_t *ctx)
-{
-    int ret = -1;
-    char property[PROPERTY_VALUE_MAX];
-    if ((property_get("ro.qualcomm.cabl", property, NULL) > 0) &&
-        (atoi(property) == 1)) {
-        ALOGD("%s: CABL is enabled", __FUNCTION__);
-        ctx->mCablProp.enabled = true;
-    } else {
-        ALOGD("%s: CABL is disabled", __FUNCTION__);
-        ctx->mCablProp.enabled = false;
-        return;
-    }
-
-    if ((property_get("persist.qcom.cabl.video_only", property, NULL) > 0) &&
-        (atoi(property) == 1)) {
-        ALOGD("%s: CABL is in video only mode", __FUNCTION__);
-        ctx->mCablProp.videoOnly = true;
-    } else {
-        ctx->mCablProp.videoOnly = false;
-    }
-
-    int daemon_socket = socket_local_client(DAEMON_SOCKET,
-                                            ANDROID_SOCKET_NAMESPACE_RESERVED,
-                                            SOCK_STREAM);
-    if(!daemon_socket) {
-        ALOGE("Connecting to socket failed: %s", strerror(errno));
-        ctx->mCablProp.enabled = false;
-        return;
-    }
-    struct timeval timeout;
-    timeout.tv_sec = 1; //wait 1 second before timeout
-    timeout.tv_usec = 0;
-
-    if (setsockopt(daemon_socket, SOL_SOCKET, SO_SNDTIMEO,
-        (char*)&timeout, sizeof(timeout )) < 0)
-        ALOGE("setsockopt failed");
-
-    ctx->mCablProp.daemon_socket = daemon_socket;
-}
-
 void initContext(hwc_context_t *ctx)
 {
     if(openFramebufferDevice(ctx) < 0) {
@@ -207,7 +122,7 @@ void initContext(hwc_context_t *ctx)
     ctx->mMDP.panel = qdutils::MDPVersion::getInstance().getPanelType();
     overlay::Overlay::initOverlay();
     ctx->mOverlay = overlay::Overlay::getInstance();
-    ctx->mRotMgr = RotMgr::getInstance();
+    ctx->mRotMgr = new RotMgr();
 
     //Is created and destroyed only once for primary
     //For external it could get created and destroyed multiple times depending
@@ -248,9 +163,6 @@ void initContext(hwc_context_t *ctx)
         ctx->mLayerRotMap[i] = new LayerRotMap();
     }
 
-    for (uint32_t i = 0; i < HWC_NUM_DISPLAY_TYPES; i++) {
-        ctx->mHwcDebug[i] = new HwcDebug(i);
-    }
     MDPComp::init(ctx);
 
     ctx->vstate.enable = false;
@@ -273,13 +185,10 @@ void initContext(hwc_context_t *ctx)
     ctx->mPrevDestVideo.left = ctx->mPrevDestVideo.top =
         ctx->mPrevDestVideo.right = ctx->mPrevDestVideo.bottom = 0;
     ctx->mPrevTransformVideo = 0;
-
     ctx->mBufferMirrorMode = false;
-
+    ctx->mSocId = getSocIdFromSystem();
     ALOGI("Initializing Qualcomm Hardware Composer");
     ALOGI("MDP version: %d", ctx->mMDP.version);
-
-    connectPPDaemon(ctx);
 }
 
 void closeContext(hwc_context_t *ctx)
@@ -323,10 +232,6 @@ void closeContext(hwc_context_t *ctx)
         if(ctx->mLayerRotMap[i]) {
             delete ctx->mLayerRotMap[i];
             ctx->mLayerRotMap[i] = NULL;
-        }
-        if(ctx->mHwcDebug[i]) {
-            delete ctx->mHwcDebug[i];
-            ctx->mHwcDebug[i] = NULL;
         }
     }
 
@@ -378,12 +283,12 @@ void getActionSafePosition(hwc_context_t *ctx, int dpy, hwc_rect_t& rect) {
     float xRatio = 1.0;
     float yRatio = 1.0;
 
-    int fbWidth = ctx->dpyAttr[dpy].xres;
-    int fbHeight = ctx->dpyAttr[dpy].yres;
+    float fbWidth = ctx->dpyAttr[dpy].xres;
+    float fbHeight = ctx->dpyAttr[dpy].yres;
     if(ctx->dpyAttr[dpy].mDownScaleMode) {
         // if downscale Mode is enabled for external, need to query
         // the actual width and height, as that is the physical w & h
-         ctx->mExtDisplay->getAttributes(fbWidth, fbHeight);
+        ctx->mExtDisplay->getAttributes((int&)fbWidth, (int&)fbHeight);
     }
 
 
@@ -396,7 +301,7 @@ void getActionSafePosition(hwc_context_t *ctx, int dpy, hwc_rect_t& rect) {
     float asX = 0;
     float asY = 0;
     float asW = fbWidth;
-    float asH = fbHeight;
+    float asH= fbHeight;
 
     // based on the action safe ratio, get the Action safe rectangle
     asW = fbWidth * (1.0f -  asWidthRatio / 100.0f);
@@ -716,25 +621,21 @@ bool isAlphaPresent(hwc_layer_1_t const* layer) {
     return false;
 }
 
-// Switch ppd on/off for YUV
-static void configurePPD(hwc_context_t *ctx, int yuvCount) {
-    if (!ctx->mCablProp.enabled)
-        return;
-
-    if (yuvCount > 0 && !ctx->mCablProp.start) {
-        ctx->mCablProp.start = true;
-        if(ctx->mCablProp.videoOnly)
-            ppdComm("cabl:on", ctx);
-        else
-            ppdComm("cabl:yuv_on", ctx);
-
-    } else if (yuvCount == 0 && ctx->mCablProp.start) {
-        ctx->mCablProp.start = false;
-        if(ctx->mCablProp.videoOnly)
-            ppdComm("cabl:off", ctx);
-        else
-            ppdComm("cabl:yuv_off", ctx);
-        return;
+// Let CABL know we have a YUV layer
+static void setYUVProp(int yuvCount) {
+    static char property[PROPERTY_VALUE_MAX];
+    if(yuvCount > 0) {
+        if (property_get("hw.cabl.yuv", property, NULL) > 0) {
+            if (atoi(property) != 1) {
+                property_set("hw.cabl.yuv", "1");
+            }
+        }
+    } else {
+        if (property_get("hw.cabl.yuv", property, NULL) > 0) {
+            if (atoi(property) != 0) {
+                property_set("hw.cabl.yuv", "0");
+            }
+        }
     }
 }
 
@@ -752,7 +653,6 @@ void setListStats(hwc_context_t *ctx,
     ctx->listStats[dpy].extOnlyLayerIndex = -1;
     ctx->listStats[dpy].isDisplayAnimating = false;
     ctx->listStats[dpy].secureUI = false;
-    ctx->mViewFrame[dpy] = (hwc_rect_t){0, 0, 0, 0};
 
     optimizeLayerRects(ctx, list, dpy);
 
@@ -760,9 +660,6 @@ void setListStats(hwc_context_t *ctx,
         hwc_layer_1_t const* layer = &list->hwLayers[i];
         private_handle_t *hnd = (private_handle_t *)layer->handle;
 
-        // Calculate view frame of each display from the layer displayframe
-        ctx->mViewFrame[dpy] = getUnion(ctx->mViewFrame[dpy],
-                                        layer->displayFrame);
 #ifdef QCOM_BSP
         if (layer->flags & HWC_SCREENSHOT_ANIMATOR_LAYER) {
             ctx->listStats[dpy].isDisplayAnimating = true;
@@ -803,6 +700,7 @@ void setListStats(hwc_context_t *ctx,
         }
     }
 
+    setYUVProp(ctx->listStats[dpy].yuvCount);
     if(dpy) {
         //uncomment the below code for testing purpose.
         /* char value[PROPERTY_VALUE_MAX];
@@ -818,9 +716,6 @@ void setListStats(hwc_context_t *ctx,
                      ctx->mExtOrientation, ctx->mBufferMirrorMode);
         }
     }
-    
-    if (dpy == HWC_DISPLAY_PRIMARY)
-        configurePPD(ctx, ctx->listStats[dpy].yuvCount);
 }
 
 
@@ -1003,25 +898,36 @@ hwc_rect_t getUnion(const hwc_rect &rect1, const hwc_rect &rect2)
    return res;
 }
 
-/* Not a geometrical rect deduction. Deducts rect2 from rect1 only if it results
- * a single rect */
-hwc_rect_t deductRect(const hwc_rect_t& rect1, const hwc_rect_t& rect2) {
+/* deducts given rect from layers display-frame and source crop.
+   also it avoid hole creation.*/
+void deductRect(const hwc_layer_1_t* layer, hwc_rect_t& irect) {
+    hwc_rect_t& disprect = (hwc_rect_t&)layer->displayFrame;
+    hwc_rect_t srcrect = integerizeSourceCrop(layer->sourceCropf);
+    int irect_w = irect.right - irect.left;
+    int irect_h = irect.bottom - irect.top;
 
-   hwc_rect_t res = rect1;
-
-   if((rect1.left == rect2.left) && (rect1.right == rect2.right)) {
-      if((rect1.top == rect2.top) && (rect2.bottom <= rect1.bottom))
-         res.top = rect2.bottom;
-      else if((rect1.bottom == rect2.bottom)&& (rect2.top >= rect1.top))
-         res.bottom = rect2.top;
-   }
-   else if((rect1.top == rect2.top) && (rect1.bottom == rect2.bottom)) {
-      if((rect1.left == rect2.left) && (rect2.right <= rect1.right))
-         res.left = rect2.right;
-      else if((rect1.right == rect2.right)&& (rect2.left >= rect1.left))
-         res.right = rect2.left;
-   }
-   return res;
+    if((disprect.left == irect.left) && (disprect.right == irect.right)) {
+        if((disprect.top == irect.top) && (irect.bottom <= disprect.bottom)) {
+            disprect.top = irect.bottom;
+            srcrect.top += irect_h;
+        }
+        else if((disprect.bottom == irect.bottom)
+                                && (irect.top >= disprect.top)) {
+            disprect.bottom = irect.top;
+            srcrect.bottom -= irect_h;
+        }
+    }
+    else if((disprect.top == irect.top) && (disprect.bottom == irect.bottom)) {
+        if((disprect.left == irect.left) && (irect.right <= disprect.right)) {
+            disprect.left = irect.right;
+            srcrect.left += irect_w;
+        }
+        else if((disprect.right == irect.right)
+                                && (irect.left >= disprect.left)) {
+            disprect.right = irect.left;
+            srcrect.right -= irect_w;
+        }
+    }
 }
 
 void optimizeLayerRects(hwc_context_t *ctx,
@@ -1037,23 +943,17 @@ void optimizeLayerRects(hwc_context_t *ctx,
             hwc_rect_t& topframe =
                 (hwc_rect_t&)list->hwLayers[i].displayFrame;
             while(j >= 0) {
-               if(!needsScaling(ctx, &list->hwLayers[j], dpy)) {
-                  hwc_layer_1_t* layer = (hwc_layer_1_t*)&list->hwLayers[j];
-                  hwc_rect_t& bottomframe = layer->displayFrame;
-                  hwc_rect_t& bottomCrop = layer->sourceCrop;
-                  int transform =layer->transform;
+                if(!needsScaling(ctx, &list->hwLayers[j], dpy)) {
+                    hwc_rect_t& bottomframe =
+                        (hwc_rect_t&)list->hwLayers[j].displayFrame;
 
-                  hwc_rect_t irect = getIntersection(bottomframe, topframe);
-                  if(isValidRect(irect)) {
-                     hwc_rect_t dest_rect;
-                     //if intersection is valid rect, deduct it
-                     dest_rect  = deductRect(bottomframe, irect);
-                     qhwc::calculate_crop_rects(bottomCrop, bottomframe,
-                                                dest_rect, transform);
-
-                  }
-               }
-               j--;
+                    hwc_rect_t irect = getIntersection(bottomframe, topframe);
+                    if(isValidRect(irect)) {
+                        //if intersection is valid rect, deduct it
+                        deductRect(&list->hwLayers[j], irect);
+                    }
+                }
+                j--;
             }
         }
         i--;
@@ -1103,9 +1003,6 @@ int hwc_sync(hwc_context_t *ctx, hwc_display_contents_1_t* list, int dpy,
     int acquireFd[MAX_NUM_APP_LAYERS];
     int count = 0;
     int releaseFd = -1;
-#ifdef USE_RETIRE_FENCE
-    int retireFd = -1;
-#endif
     int fbFd = -1;
     int rotFd = -1;
     bool swapzero = false;
@@ -1120,9 +1017,6 @@ int hwc_sync(hwc_context_t *ctx, hwc_display_contents_1_t* list, int dpy,
     }
     data.acq_fen_fd = acquireFd;
     data.rel_fen_fd = &releaseFd;
-#ifdef USE_RETIRE_FENCE
-    data.retire_fen_fd = &retireFd;
-#endif
 
     char property[PROPERTY_VALUE_MAX];
     if(property_get("debug.egl.swapinterval", property, "1") > 0) {
@@ -1246,20 +1140,13 @@ int hwc_sync(hwc_context_t *ctx, hwc_display_contents_1_t* list, int dpy,
         releaseFd = -1;
     }
 
-#ifdef USE_RETIRE_FENCE
-    close(releaseFd);
-    if(UNLIKELY(swapzero))
-        list->retireFenceFd = -1;
-    else
-        list->retireFenceFd = retireFd;
-#else
-    if(UNLIKELY(swapzero)) {
+    if(UNLIKELY(swapzero)){
         list->retireFenceFd = -1;
         close(releaseFd);
     } else {
         list->retireFenceFd = releaseFd;
     }
-#endif
+
     return ret;
 }
 
@@ -1448,7 +1335,6 @@ int configureLowRes(hwc_context_t *ctx, hwc_layer_1_t *layer,
     eTransform orient = static_cast<eTransform>(transform);
     int downscale = 0;
     int rotFlags = ovutils::ROT_FLAGS_NONE;
-    bool forceRot = false;
     Whf whf(getWidth(hnd), getHeight(hnd),
             getMdpFormat(hnd->format), hnd->size);
 
@@ -1487,24 +1373,13 @@ int configureLowRes(hwc_context_t *ctx, hwc_layer_1_t *layer,
         if(downscale) {
             rotFlags = ROT_DOWNSCALE_ENABLED;
         }
-        unsigned int& prevWidth = ctx->mPrevWHF[dpy].w;
-        unsigned int& prevHeight = ctx->mPrevWHF[dpy].h;
-        if(prevWidth != (uint32_t)getWidth(hnd) ||
-               prevHeight != (uint32_t)getHeight(hnd)) {
-            uint32_t prevBufArea = (prevWidth * prevHeight);
-            if(prevBufArea) {
-                forceRot = true;
-            }
-            prevWidth = (uint32_t)getWidth(hnd);
-            prevHeight = (uint32_t)getHeight(hnd);
-        }
     }
 
     setMdpFlags(layer, mdpFlags, downscale, transform);
     trimLayer(ctx, dpy, transform, crop, dst);
 
     if(isYuvBuffer(hnd) && //if 90 component or downscale, use rot
-            ((transform & HWC_TRANSFORM_ROT_90) || downscale || forceRot)) {
+            ((transform & HWC_TRANSFORM_ROT_90) || downscale)) {
         *rot = ctx->mRotMgr->getNext();
         if(*rot == NULL) return -1;
         Whf origWhf(hnd->width, hnd->height,
@@ -1512,6 +1387,7 @@ int configureLowRes(hwc_context_t *ctx, hwc_layer_1_t *layer,
         if(configRotator(*rot, whf, origWhf,  mdpFlags, orient, downscale) < 0) {
         //Configure rotator for pre-rotation
             ALOGE("%s: configRotator failed!", __FUNCTION__);
+            ctx->mOverlay->clear(dpy);
             return -1;
         }
         ctx->mLayerRotMap[dpy]->add(layer, *rot);
@@ -1530,6 +1406,7 @@ int configureLowRes(hwc_context_t *ctx, hwc_layer_1_t *layer,
 
     if(configMdp(ctx->mOverlay, parg, orient, crop, dst, metadata, dest) < 0) {
         ALOGE("%s: commit failed for low res panel", __FUNCTION__);
+        ctx->mLayerRotMap[dpy]->reset();
         return -1;
     }
     return 0;
@@ -1592,6 +1469,7 @@ int configureHighRes(hwc_context_t *ctx, hwc_layer_1_t *layer,
         if(configRotator(*rot, whf, origWhf, mdpFlagsL, orient, downscale) < 0) {
         //Configure rotator for pre-rotation
             ALOGE("%s: configRotator failed!", __FUNCTION__);
+            ctx->mOverlay->clear(dpy);
             return -1;
         }
         ctx->mLayerRotMap[dpy]->add(layer, *rot);
@@ -1690,15 +1568,24 @@ void LayerRotMap::reset() {
     mCount = 0;
 }
 
-void LayerRotMap::clear() {
-    RotMgr::getInstance()->markUnusedTop(mCount);
-    reset();
-}
-
 void LayerRotMap::setReleaseFd(const int& fence) {
     for(uint32_t i = 0; i < mCount; i++) {
         mRot[i]->setReleaseFd(dup(fence));
     }
+}
+
+int getSocIdFromSystem() {
+    FILE *device = NULL;
+    int soc_id = 0;
+    char  buffer[10];
+    int result;
+    device = fopen("/sys/devices/system/soc/soc0/id","r");
+    if(device != NULL) {
+        result = fread (buffer,1,4,device);
+        soc_id = atoi(buffer);
+        fclose(device);
+    }
+    return soc_id;
 }
 
 };//namespace qhwc

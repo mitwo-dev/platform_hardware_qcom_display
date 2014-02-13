@@ -34,7 +34,7 @@
 #include <fcntl.h>
 #include <cutils/log.h>
 #include <errno.h>
-#include <gralloc_priv.h>
+#include "gralloc_priv.h"
 #include "ionalloc.h"
 
 using gralloc::IonAlloc;
@@ -91,8 +91,7 @@ int IonAlloc::alloc_buffer(alloc_data& data)
 
     fd_data.handle = ionAllocData.handle;
     handle_data.handle = ionAllocData.handle;
-    if(ioctl(mIonFd, ION_IOC_MAP, &fd_data))
-    {
+    if(ioctl(mIonFd, ION_IOC_MAP, &fd_data)) {
         err = -errno;
         ALOGE("%s: ION_IOC_MAP failed with error - %s",
               __FUNCTION__, strerror(errno));
@@ -115,7 +114,6 @@ int IonAlloc::alloc_buffer(alloc_data& data)
         clean_buffer(base, data.size, data.offset, fd_data.fd,
                      CACHE_CLEAN_AND_INVALIDATE);
     }
-
 
     data.base = base;
     data.fd = fd_data.fd;

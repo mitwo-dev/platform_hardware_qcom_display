@@ -38,13 +38,7 @@ namespace overlay {
 using namespace utils;
 
 Overlay::Overlay() {
-    char property[PROPERTY_VALUE_MAX];
-    if (property_get("debug.mdpcomp.maxlayer", property, NULL) > 0) {
-        PipeBook::NUM_PIPES = atoi(property);
-    } else {
-        PipeBook::NUM_PIPES = qdutils::MDPVersion::getInstance().getTotalPipes();
-    }
-
+    PipeBook::NUM_PIPES = qdutils::MDPVersion::getInstance().getTotalPipes();
     for(int i = 0; i < PipeBook::NUM_PIPES; i++) {
         mPipeBook[i].init();
     }
@@ -277,15 +271,12 @@ int Overlay::initOverlay() {
                 ALOGD("ndx=%d num=%d z_order=%d", minfo->pndx, minfo->pnum,
                       minfo->z_order);
                 // clear any pipe connected to mixer including base pipe.
-                if (qdutils::MDPVersion::getInstance().getMDPVersion() >= qdutils::MDP_V4_2 ||
-                        (minfo->z_order) != -1) {
-                    int index = minfo->pndx;
-                    ALOGD("Unset overlay with index: %d at mixer %d", index, i);
-                    if(ioctl(fd, MSMFB_OVERLAY_UNSET, &index) == -1) {
-                        ALOGE("ERROR: MSMFB_OVERLAY_UNSET failed");
-                        close(fd);
-                        return -1;
-                    }
+                int index = minfo->pndx;
+                ALOGD("Unset overlay with index: %d at mixer %d", index, i);
+                if(ioctl(fd, MSMFB_OVERLAY_UNSET, &index) == -1) {
+                    ALOGE("ERROR: MSMFB_OVERLAY_UNSET failed");
+                    close(fd);
+                    return -1;
                 }
                 minfo++;
             }
@@ -347,7 +338,7 @@ void Overlay::getDump(char *buf, size_t len) {
     const char *str = "\nOverlay State\n==========================\n";
     strncat(buf, str, strlen(str));
     for(int i = 0; i < PipeBook::NUM_PIPES; i++) {
-        if(mPipeBook[i].valid() && mPipeBook[i].isUsed(i)) {
+        if(mPipeBook[i].valid()) {
             mPipeBook[i].mPipe->getDump(buf, len);
             char str[64] = {'\0'};
             snprintf(str, 64, "Attached to dpy=%d\n\n", mPipeBook[i].mDisplay);
